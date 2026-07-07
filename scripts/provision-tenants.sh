@@ -38,6 +38,7 @@ while read -r tenant_id; do
     status: "active",
     emrApplicationId: .[$id].emrApplicationId,
     executionRoleArn: .[$id].executionRoleArn,
+    kmsKeyArn:        .[$id].kmsKeyArn,
     s3BucketName:     .[$id].s3BucketName
   }')
   echo "    -> ${tenant_id}"

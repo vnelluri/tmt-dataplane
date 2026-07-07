@@ -14,14 +14,15 @@ module "tenant" {
   source   = "./modules/tenant"
   for_each = var.tenants
 
-  tenant_id            = each.key
-  tenant_name          = each.value.name
-  name_prefix          = var.name_prefix
-  artifacts_bucket     = module.account_baseline.artifacts_bucket
-  max_concurrent_vcpus = each.value.max_concurrent_vcpus
-  max_memory_gb        = each.value.max_memory_gb
-  subnet_ids           = var.subnet_ids
-  security_group_ids   = var.security_group_ids
+  tenant_id             = each.key
+  tenant_name           = each.value.name
+  name_prefix           = var.name_prefix
+  artifacts_bucket      = module.account_baseline.artifacts_bucket
+  backend_task_role_arn = var.backend_task_role_arn
+  max_concurrent_vcpus  = each.value.max_concurrent_vcpus
+  max_memory_gb         = each.value.max_memory_gb
+  subnet_ids            = var.subnet_ids
+  security_group_ids    = var.security_group_ids
 }
 
 # Consumed by scripts/provision-tenants.sh for the write-back step

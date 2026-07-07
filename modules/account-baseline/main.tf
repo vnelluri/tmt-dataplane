@@ -3,7 +3,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 5.0"
+      version = ">= 5.100"
     }
   }
 }
@@ -13,7 +13,7 @@ data "aws_region" "current" {}
 
 locals {
   account_id = data.aws_caller_identity.current.account_id
-  region     = data.aws_region.current.name
+  region     = data.aws_region.current.region
   tags       = merge(var.tags, { platform = var.name_prefix, managedBy = "tmt-dataplane" })
 }
 
@@ -45,6 +45,38 @@ resource "aws_s3_bucket_public_access_block" "artifacts" {
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
+}
+
+# Cross-account access for the control-plane backend (S3 browse, artifact
+# validation at model registration, tenant prefix markers). S3 uses a
+# resource policy rather than the runtime role: these are human-facing
+# read/browse paths where the backend's own identity is the right principal.
+data "aws_iam_policy_document" "artifacts_bucket_policy" {
+  statement {
+    sid       = "ControlPlaneBackendList"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.artifacts.arn]
+    principals {
+      type        = "AWS"
+      identifiers = [var.backend_task_role_arn]
+    }
+  }
+  statement {
+    sid       = "ControlPlaneBackendObjects"
+    actions   = ["s3:GetObject", "s3:PutObject"]
+    resources = ["${aws_s3_bucket.artifacts.arn}/*"]
+    principals {
+      type        = "AWS"
+      identifiers = [var.backend_task_role_arn]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "artifacts" {
+  bucket = aws_s3_bucket.artifacts.id
+  policy = data.aws_iam_policy_document.artifacts_bucket_policy.json
+
+  depends_on = [aws_s3_bucket_public_access_block.artifacts]
 }
 
 # ── Provisioning event bus: the control-plane backend PutEvents here
@@ -250,6 +282,28 @@ data "aws_iam_policy_document" "runtime" {
       variable = "aws:ResourceTag/tenantId"
       values   = ["$${aws:PrincipalTag/tenantId}"]
     }
+  }
+  # Per-job token secrets live in THIS account so the tenant execution roles
+  # can read them account-locally; the backend manages their lifecycle
+  # through this role.
+  statement {
+    sid = "JobTokenSecrets"
+    actions = [
+      "secretsmanager:CreateSecret", "secretsmanager:PutSecretValue",
+      "secretsmanager:GetSecretValue", "secretsmanager:DeleteSecret",
+      "secretsmanager:DescribeSecret",
+    ]
+    resources = [
+      "arn:aws:secretsmanager:${local.region}:${local.account_id}:secret:ml-platform/job-tokens/*"
+    ]
+  }
+  statement {
+    sid = "SageMakerTrainingJobs"
+    actions = [
+      "sagemaker:CreateTrainingJob", "sagemaker:DescribeTrainingJob",
+      "sagemaker:StopTrainingJob",
+    ]
+    resources = ["*"]
   }
   statement {
     sid       = "PassTenantExecutionRoles"

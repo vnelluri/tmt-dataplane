@@ -16,10 +16,17 @@ services.
   `TENANT_PROVISIONING_EVENT_BUS` to this bus ARN)
 - EventBridge rule on `TenantProvisioningRequested` → CodeBuild project that
   runs this repo's reconcile (`pipeline/buildspec.yml`)
-- `ml-platform-dataplane-runtime` cross-account role for future runtime
-  hardening: the backend can assume it with a `tenantId` session tag, and its
-  EMR permissions are ABAC-constrained so a request tagged for tenant A cannot
-  touch tenant B's application even if the backend has a tenancy bug
+- `ml-platform-dataplane-runtime` cross-account role — THE mechanism of the
+  account split: the backend assumes it with a `tenantId` session tag for
+  every EMR and job-secret operation (set the backend's
+  `DATAPLANE_RUNTIME_ROLE_ARN` to this role's ARN), and its permissions are
+  ABAC-constrained so a request tagged for tenant A cannot touch tenant B's
+  application even if the backend has a tenancy bug
+- Artifacts **bucket policy** and per-tenant **KMS key policies** granting
+  the control-plane backend task role direct cross-account access (S3
+  browse/validation and Snowflake-token encryption use the backend's own
+  identity with full ARNs — the tenant's key ARN reaches the backend via the
+  provisioning write-back)
 
 **`modules/tenant`** — one instance per tenant (`for_each` over `var.tenants`):
 

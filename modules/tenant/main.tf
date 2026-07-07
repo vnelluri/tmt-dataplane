@@ -3,7 +3,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 5.0"
+      version = ">= 5.100"
     }
   }
 }
@@ -13,7 +13,7 @@ data "aws_region" "current" {}
 
 locals {
   account_id = data.aws_caller_identity.current.account_id
-  region     = data.aws_region.current.name
+  region     = data.aws_region.current.region
 
   tags = merge(var.tags, {
     platform   = var.name_prefix # backend IAM policy conditions on this tag
@@ -42,11 +42,36 @@ resource "aws_emrserverless_application" "tenant" {
   }
 }
 
-# ── Per-tenant KMS key: alias matches the backend KmsCipher convention
-#    (alias/ml-platform-snowflake-<tenantId>) ────────────────────────────────
+# ── Per-tenant KMS key ───────────────────────────────────────────────────────
+# The key POLICY grants the control-plane backend task role Encrypt/Decrypt —
+# this is what makes the account split work: the backend uses the key ARN
+# (written back to Tenant.kmsKeyArn) with its own credentials; aliases only
+# matter for same-account deployments.
+data "aws_iam_policy_document" "snowflake_key" {
+  statement {
+    sid       = "AccountAdmin"
+    actions   = ["kms:*"]
+    resources = ["*"]
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:aws:iam::${local.account_id}:root"]
+    }
+  }
+  statement {
+    sid       = "ControlPlaneBackendUse"
+    actions   = ["kms:Encrypt", "kms:Decrypt", "kms:DescribeKey"]
+    resources = ["*"]
+    principals {
+      type        = "AWS"
+      identifiers = [var.backend_task_role_arn]
+    }
+  }
+}
+
 resource "aws_kms_key" "snowflake" {
   description         = "Snowflake OAuth token encryption for ${var.tenant_id}"
   enable_key_rotation = true
+  policy              = data.aws_iam_policy_document.snowflake_key.json
   tags                = local.tags
 }
 

@@ -47,6 +47,11 @@ variable "security_group_ids" {
   type        = list(string)
 }
 
+variable "backend_task_role_arn" {
+  description = "Control-plane backend task role — granted Encrypt/Decrypt on the tenant KMS key via key policy (cross-account KMS requires the key policy, and the backend uses the key ARN directly)."
+  type        = string
+}
+
 variable "job_token_secret_prefix" {
   description = "Secrets Manager name prefix for per-job Snowflake token secrets."
   type        = string
