@@ -30,12 +30,55 @@ resource "aws_s3_bucket_versioning" "artifacts" {
   }
 }
 
+# Customer-managed key for bucket SSE. The default AWS-managed aws/s3 key
+# CANNOT be granted to a cross-account principal, so in the account split the
+# control-plane backend's GetObject/PutObject would fail KMS AccessDenied
+# even with the bucket policy below. A CMK (key policy grants the backend and
+# tenant execution roles, tagged `platform` for the backend's tag-scoped
+# identity policy) makes cross-account object access work.
+data "aws_iam_policy_document" "artifacts_key" {
+  statement {
+    sid       = "AccountAdmin"
+    actions   = ["kms:*"]
+    resources = ["*"]
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:aws:iam::${local.account_id}:root"]
+    }
+  }
+  statement {
+    sid = "ControlPlaneBackendUse"
+    actions = [
+      "kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey",
+    ]
+    resources = ["*"]
+    principals {
+      type        = "AWS"
+      identifiers = [var.backend_task_role_arn]
+    }
+  }
+}
+
+resource "aws_kms_key" "artifacts" {
+  description         = "${var.name_prefix} artifacts bucket SSE"
+  enable_key_rotation = true
+  policy              = data.aws_iam_policy_document.artifacts_key.json
+  tags                = local.tags
+}
+
+resource "aws_kms_alias" "artifacts" {
+  name          = "alias/${var.name_prefix}-artifacts"
+  target_key_id = aws_kms_key.artifacts.key_id
+}
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "artifacts" {
   bucket = aws_s3_bucket.artifacts.id
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "aws:kms"
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.artifacts.arn
     }
+    bucket_key_enabled = true
   }
 }
 
@@ -285,25 +328,54 @@ data "aws_iam_policy_document" "runtime" {
   }
   # Per-job token secrets live in THIS account so the tenant execution roles
   # can read them account-locally; the backend manages their lifecycle
-  # through this role.
+  # through this role. The backend tags each secret with tenantId, so
+  # read/write/delete are ABAC-scoped to the session's tenant; CreateSecret
+  # requires the matching request tag. Prefix is the configured one, not a
+  # literal, so it can never drift from the backend's actual secret names.
   statement {
-    sid = "JobTokenSecrets"
-    actions = [
-      "secretsmanager:CreateSecret", "secretsmanager:PutSecretValue",
-      "secretsmanager:GetSecretValue", "secretsmanager:DeleteSecret",
-      "secretsmanager:DescribeSecret",
-    ]
-    resources = [
-      "arn:aws:secretsmanager:${local.region}:${local.account_id}:secret:ml-platform/job-tokens/*"
-    ]
+    sid       = "JobTokenSecretsCreate"
+    actions   = ["secretsmanager:CreateSecret"]
+    resources = ["arn:aws:secretsmanager:${local.region}:${local.account_id}:secret:${var.job_token_secret_prefix}*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/tenantId"
+      values   = ["$${aws:PrincipalTag/tenantId}"]
+    }
   }
   statement {
-    sid = "SageMakerTrainingJobs"
+    sid = "JobTokenSecretsManage"
     actions = [
-      "sagemaker:CreateTrainingJob", "sagemaker:DescribeTrainingJob",
-      "sagemaker:StopTrainingJob",
+      "secretsmanager:PutSecretValue", "secretsmanager:GetSecretValue",
+      "secretsmanager:DeleteSecret", "secretsmanager:DescribeSecret",
     ]
+    resources = ["arn:aws:secretsmanager:${local.region}:${local.account_id}:secret:${var.job_token_secret_prefix}*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/tenantId"
+      values   = ["$${aws:PrincipalTag/tenantId}"]
+    }
+  }
+  # SageMaker jobs are tagged tenantId at creation; describe/stop are
+  # ABAC-scoped to the session tenant, create requires the matching tag.
+  statement {
+    sid       = "SageMakerCreate"
+    actions   = ["sagemaker:CreateTrainingJob"]
     resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/tenantId"
+      values   = ["$${aws:PrincipalTag/tenantId}"]
+    }
+  }
+  statement {
+    sid       = "SageMakerManage"
+    actions   = ["sagemaker:DescribeTrainingJob", "sagemaker:StopTrainingJob"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/tenantId"
+      values   = ["$${aws:PrincipalTag/tenantId}"]
+    }
   }
   statement {
     sid       = "PassTenantExecutionRoles"

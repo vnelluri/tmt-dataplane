@@ -31,15 +31,29 @@ terraform apply -input=false -auto-approve
 echo "==> Writing back provisioning results"
 outputs=$(terraform output -json tenants)
 
-echo "${tenants_json}" | jq -r '.items[] | select(.provisioningStatus != "active") | .tenantId' |
+# Write back every tenant whose stored record does not already match the
+# Terraform outputs — NOT just pending ones. A tenant that went active before
+# a field existed (e.g. kmsKeyArn added with the account split) still needs
+# its new value pushed; re-PUTting an already-matching tenant is idempotent
+# and skipped here to avoid needless calls.
+echo "${outputs}" | jq -r 'keys[]' |
 while read -r tenant_id; do
   [ -z "${tenant_id}" ] && continue
-  body=$(echo "${outputs}" | jq --arg id "${tenant_id}" '{
+  out=$(echo "${outputs}" | jq -c --arg id "${tenant_id}" '.[$id]')
+  cur=$(echo "${tenants_json}" | jq -c --arg id "${tenant_id}" '.items[] | select(.tenantId == $id)')
+  needs=$(jq -n --argjson out "${out}" --argjson cur "${cur:-{}}" '
+    ($cur == {})
+    or ($cur.provisioningStatus != "active")
+    or ($cur.emrApplicationId != $out.emrApplicationId)
+    or ($cur.executionRoleArn != $out.executionRoleArn)
+    or ($cur.kmsKeyArn        != $out.kmsKeyArn)')
+  [ "${needs}" != "true" ] && continue
+  body=$(echo "${out}" | jq '{
     status: "active",
-    emrApplicationId: .[$id].emrApplicationId,
-    executionRoleArn: .[$id].executionRoleArn,
-    kmsKeyArn:        .[$id].kmsKeyArn,
-    s3BucketName:     .[$id].s3BucketName
+    emrApplicationId: .emrApplicationId,
+    executionRoleArn: .executionRoleArn,
+    kmsKeyArn:        .kmsKeyArn,
+    s3BucketName:     .s3BucketName
   }')
   echo "    -> ${tenant_id}"
   curl -sfS "${auth[@]}" -X PUT \

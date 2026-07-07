@@ -9,9 +9,10 @@ variable "artifacts_bucket" {
   type        = string
 }
 
-variable "control_plane_account_id" {
-  description = "AWS account ID running the tmt backend (control plane)."
+variable "job_token_secret_prefix" {
+  description = "Secrets Manager name prefix for per-job token secrets (must match the backend's SECRETS_MANAGER_JOB_TOKEN_PREFIX)."
   type        = string
+  default     = "ml-platform/job-tokens/"
 }
 
 variable "backend_task_role_arn" {

@@ -1,7 +1,6 @@
 # Copy to terraform.tfvars and fill in for this dataplane account.
 region                        = "us-east-1"
 artifacts_bucket              = "ml-platform-artifacts-prod"
-control_plane_account_id      = "111111111111"
 backend_task_role_arn         = "arn:aws:iam::111111111111:role/ml-platform-backend-task-role"
 repo_clone_url                = "https://github.com/vnelluri/tmt-dataplane.git"
 platform_api_url              = "https://ml.example.com"

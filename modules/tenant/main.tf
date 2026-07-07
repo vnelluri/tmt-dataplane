@@ -142,6 +142,14 @@ data "aws_iam_policy_document" "execution" {
     resources = [aws_kms_key.snowflake.arn]
   }
 
+  # Read/write objects under the tenant prefix, which are SSE-KMS encrypted
+  # with the shared artifacts CMK — the training job needs data-key ops on it.
+  statement {
+    sid       = "ArtifactsBucketKms"
+    actions   = ["kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"]
+    resources = [var.artifacts_kms_key_arn]
+  }
+
   statement {
     sid = "JobLogs"
     actions = [

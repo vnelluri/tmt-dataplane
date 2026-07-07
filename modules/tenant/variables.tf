@@ -47,6 +47,11 @@ variable "security_group_ids" {
   type        = list(string)
 }
 
+variable "artifacts_kms_key_arn" {
+  description = "ARN of the artifacts bucket SSE CMK (from account-baseline) — the tenant execution role needs data-key ops on it to read/write SSE-KMS objects."
+  type        = string
+}
+
 variable "backend_task_role_arn" {
   description = "Control-plane backend task role — granted Encrypt/Decrypt on the tenant KMS key via key policy (cross-account KMS requires the key policy, and the backend uses the key ARN directly)."
   type        = string
