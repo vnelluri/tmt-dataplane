@@ -1,0 +1,17 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+
+# Live variable files may carry account-specific values; commit only examples.
+terraform.tfvars
+*.auto.tfvars
+*.auto.tfvars.json
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

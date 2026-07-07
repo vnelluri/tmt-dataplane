@@ -1,0 +1,16 @@
+# Copy to terraform.tfvars and fill in for this dataplane account.
+region                        = "us-east-1"
+artifacts_bucket              = "ml-platform-artifacts-prod"
+control_plane_account_id      = "111111111111"
+backend_task_role_arn         = "arn:aws:iam::111111111111:role/ml-platform-backend-task-role"
+repo_clone_url                = "https://github.com/vnelluri/tmt-dataplane.git"
+platform_api_url              = "https://ml.example.com"
+platform_api_token_secret_arn = "arn:aws:secretsmanager:us-east-1:222222222222:secret:ml-platform/provisioner-api-token"
+subnet_ids                    = ["subnet-aaaa", "subnet-bbbb"]
+security_group_ids            = ["sg-cccc"]
+
+# Per-tenant capacity overrides (tenant *membership* is reconciled from the
+# platform API by scripts/provision-tenants.sh; only overrides live here).
+# tenants = {
+#   "tenant-risk-analytics" = { name = "Risk Analytics", max_concurrent_vcpus = 128 }
+# }

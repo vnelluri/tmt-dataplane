@@ -1,0 +1,19 @@
+# CodeBuild spec for the tenant provisioner (see modules/account-baseline).
+# Triggered by TenantProvisioningRequested events; safe to run manually or on
+# a schedule — the reconcile is declarative and idempotent.
+version: 0.2
+
+env:
+  variables:
+    TF_IN_AUTOMATION: "true"
+    TERRAFORM_VERSION: "1.9.5"
+
+phases:
+  install:
+    commands:
+      - curl -sSLo /tmp/terraform.zip "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+      - unzip -o /tmp/terraform.zip -d /usr/local/bin
+      - terraform -version
+  build:
+    commands:
+      - bash scripts/provision-tenants.sh
