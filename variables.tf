@@ -41,8 +41,13 @@ variable "platform_api_token_secret_arn" {
   type        = string
 }
 
+variable "vpc_id" {
+  description = "Dataplane VPC id (for the EMR Studio engine/workspace security groups)."
+  type        = string
+}
+
 variable "subnet_ids" {
-  description = "Dataplane VPC subnets for EMR Serverless workers."
+  description = "Dataplane VPC subnets for EMR Serverless workers and EMR Studio Workspaces."
   type        = list(string)
 }
 
@@ -50,6 +55,7 @@ variable "security_group_ids" {
   description = "Security groups for EMR Serverless workers."
   type        = list(string)
 }
+
 
 # The reconcile script regenerates tenants.auto.tfvars.json from the platform
 # API (GET /tenants) on every pipeline run — the API is the source of truth

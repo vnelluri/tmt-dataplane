@@ -237,8 +237,33 @@ data "aws_iam_policy_document" "codebuild" {
       "iam:ListInstanceProfilesForRole", "iam:UpdateAssumeRolePolicy",
     ]
     resources = [
-      "arn:aws:iam::${local.account_id}:role/${var.name_prefix}-tenant-*-exec"
+      # Per-tenant execution roles, plus the platform-global EMR Studio roles
+      # (service + basic/intermediate tier) the emr_studio module manages.
+      "arn:aws:iam::${local.account_id}:role/${var.name_prefix}-tenant-*-exec",
+      "arn:aws:iam::${local.account_id}:role/${var.name_prefix}-emr-studio-*",
     ]
+  }
+  # EMR Studio (platform-global, applied here in IAM auth mode): the Studio
+  # resource + its two security groups, and passing the service role to
+  # CreateStudio.
+  statement {
+    sid = "ManageEmrStudio"
+    actions = [
+      "elasticmapreduce:CreateStudio", "elasticmapreduce:DeleteStudio",
+      "elasticmapreduce:DescribeStudio", "elasticmapreduce:UpdateStudio",
+      "elasticmapreduce:ListStudios",
+      "ec2:CreateSecurityGroup", "ec2:DeleteSecurityGroup",
+      "ec2:DescribeSecurityGroups", "ec2:CreateTags",
+      "ec2:AuthorizeSecurityGroupIngress", "ec2:AuthorizeSecurityGroupEgress",
+      "ec2:RevokeSecurityGroupIngress", "ec2:RevokeSecurityGroupEgress",
+      "ec2:DescribeVpcs", "ec2:DescribeSubnets",
+    ]
+    resources = ["*"]
+  }
+  statement {
+    sid       = "PassEmrStudioServiceRole"
+    actions   = ["iam:PassRole"]
+    resources = ["arn:aws:iam::${local.account_id}:role/${var.name_prefix}-emr-studio-*"]
   }
   statement {
     sid       = "ReadApiToken"

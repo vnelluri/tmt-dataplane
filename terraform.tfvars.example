@@ -5,6 +5,7 @@ backend_task_role_arn         = "arn:aws:iam::111111111111:role/ml-platform-back
 repo_clone_url                = "https://github.com/vnelluri/tmt-dataplane.git"
 platform_api_url              = "https://ml.example.com"
 platform_api_token_secret_arn = "arn:aws:secretsmanager:us-east-1:222222222222:secret:ml-platform/provisioner-api-token"
+vpc_id                        = "vpc-dddd"
 subnet_ids                    = ["subnet-aaaa", "subnet-bbbb"]
 security_group_ids            = ["sg-cccc"]
 

@@ -28,6 +28,16 @@ services.
   identity with full ARNs — the tenant's key ARN reaches the backend via the
   provisioning write-back)
 
+**Platform-global EMR Studio** (root `module.emr_studio`, sourced from the tmt
+monorepo's `backend/iac-emr-studio`, IAM auth mode) — applied here because it is
+applied-once-global like the baseline, lives next to the EMR Serverless apps its
+Workspaces attach to, and stores Workspaces in this account's artifacts bucket.
+The backend assumes its `basic`/`intermediate` tier roles (which trust
+`backend_task_role_arn`) and presigns — no Identity Center. Wire
+`emr_studio_id` + `emr_studio_tier_role_arns` (root outputs) into the backend's
+`EMR_STUDIO_ID` / `EMR_STUDIO_{BASIC,INTERMEDIATE}_ROLE_ARN` and `backend/iac`'s
+`emr_studio_tier_role_arns`.
+
 **`modules/tenant`** — one instance per tenant (`for_each` over `var.tenants`):
 
 - EMR Serverless application with `maximum_capacity` as the hard per-tenant
