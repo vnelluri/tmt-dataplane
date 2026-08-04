@@ -33,11 +33,10 @@ data "aws_caller_identity" "current" {}
 # Applied-once, next to the EMR Serverless apps it attaches to and the
 # artifacts bucket its Workspaces store in. IAM mode: the backend assumes the
 # tier roles (which trust the backend task role) and presigns — no Identity
-# Center. Sourced from the tmt monorepo; the module code lives there.
+# Center. The module lives here (modules/emr-studio); the control-plane backend
+# only consumes its outputs (EMR_STUDIO_ID, tier role ARNs).
 module "emr_studio" {
-  # ref must be a literal (Terraform can't interpolate module source). Bump to a
-  # release tag / main once the IAM-mode module changes are merged.
-  source = "git::https://github.com/vnelluri/mltpui.git//backend/iac-emr-studio?ref=auth-cognito-saml"
+  source = "./modules/emr-studio"
 
   name_prefix         = var.name_prefix
   vpc_id              = var.vpc_id
