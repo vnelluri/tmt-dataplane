@@ -22,9 +22,8 @@ module "emr_studio" {
   subnet_ids          = var.subnet_ids
   default_s3_location = "s3://${var.artifacts_bucket}/emr-studio-workspaces"
 
-  # IAM mode (default) requires a SAML provider (Entra) — supply exactly one:
-  saml_provider_arn = var.emr_studio_saml_provider_arn        # existing IdP, OR
-  # saml_metadata_document = var.emr_studio_saml_metadata_document  # create one
+  # IAM mode (default) requires the ARN of the admin-created SAML provider (Entra):
+  saml_provider_arn = var.emr_studio_saml_provider_arn
 }
 
 # Wire the outputs:
@@ -110,16 +109,15 @@ module "emr_studio" {
   subnet_ids          = var.subnet_ids
   default_s3_location = "s3://${var.artifacts_bucket}/emr-studio-workspaces"
   auth_mode           = "IAM"
-  # Federation to Entra — supply exactly one (session_mappings is ignored):
-  saml_provider_arn      = var.emr_studio_saml_provider_arn      # existing IdP, OR
-  saml_metadata_document = var.emr_studio_saml_metadata_document # create one
+  # ARN of the admin-created IAM SAML provider (Entra); session_mappings ignored.
+  saml_provider_arn = var.emr_studio_saml_provider_arn
 }
 ```
 
-`saml_provider_arn` (admin-created provider, referenced) is the safer path — a
-permissions boundary may deny `iam:CreateSAMLProvider`, the same class of block
-that pushed us off SSO. Use `saml_metadata_document` only if the CI/CD role is
-allowed to create the provider.
+The SAML provider is created **out-of-band by an IAM admin** and referenced by
+ARN. This module has no `iam:CreateSAMLProvider` — a permissions boundary may
+deny it (the same class of block that pushed us off SSO), and it's a sensitive
+account-global resource.
 
 Wire back: set the backend's `EMR_STUDIO_URL` to the module's **`url`** output
 (the backend needs nothing else) and `EMR_AUTH_MODE=IAM`. Hand
@@ -139,10 +137,11 @@ a user's group is mapped to.
 
 ## What this module does NOT do
 
-- Configure the Entra tenant / SAML app itself, or manage its users/groups.
-  (In IAM mode it *creates the AWS-side IAM SAML provider* from the metadata you
-  supply — or references one you pass by ARN — but the Entra-side app, claims,
-  and group assignments are the admin's job: `docs/EMR_STUDIO_FEDERATION_REQUEST.md`.)
+- Create or manage the IAM SAML provider (an IAM admin creates it out-of-band;
+  this module only references it by `saml_provider_arn` — no
+  `iam:CreateSAMLProvider`), the Entra tenant / SAML app, or their users/groups.
+  The Entra-side app, claims, and group assignments are the admin's job:
+  `docs/EMR_STUDIO_FEDERATION_REQUEST.md`.
 - Create or manage IAM Identity Center itself (SSO mode's IdP).
 - Create per-tenant EMR Serverless applications — those come from
   `tmt-dataplane`, same as job-submission compute (see `backend/iac/README.md`).
@@ -158,8 +157,8 @@ a user's group is mapped to.
 - **SSO mode:** a shared `user_role`, two customer-managed session policies
   (`basic`, `intermediate`), and `aws_emr_studio_session_mapping` entries.
 - **IAM mode:** two per-tier roles (`basic`, `intermediate`) trusted by the
-  SAML provider for `sts:AssumeRoleWithSAML`, plus (when
-  `saml_metadata_document` is set) the `aws_iam_saml_provider` itself.
+  admin-created SAML provider (referenced via `saml_provider_arn`) for
+  `sts:AssumeRoleWithSAML`. The SAML provider itself is NOT created here.
 - The `aws_emr_studio` resource (unless `create_studio = false`).
 
 ## Variables of note
@@ -178,9 +177,8 @@ a user's group is mapped to.
 - `studio_id` / `studio_url` — identifiers of an externally created Studio,
   used only when `create_studio = false`.
 - `auth_mode` — `"IAM"` (default) or `"SSO"`; see "IAM authentication mode".
-- `saml_provider_arn` / `saml_metadata_document` — IAM mode only; the SAML IdP
-  (Entra) the tier roles federate to. Supply **exactly one** — the ARN of an
-  existing provider, or the metadata XML to have the module create one.
-  **Required** when `auth_mode = "IAM"`.
+- `saml_provider_arn` — IAM mode only; ARN of the **admin-created** IAM SAML
+  provider (Entra) the tier roles federate to. **Required** when
+  `auth_mode = "IAM"`. The module never creates the provider.
 - `emr_serverless_runtime_role_arn_pattern` — IAM mode only; role(s) the
   intermediate tier may `iam:PassRole` to start jobs (default `*`).

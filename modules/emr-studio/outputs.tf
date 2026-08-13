@@ -44,6 +44,6 @@ output "tier_role_arns" {
 }
 
 output "saml_provider_arn" {
-  description = "IAM mode: the IAM SAML provider ARN the tier roles trust (created here or the passed-in saml_provider_arn). Null in SSO mode. The Entra \"Role\" claim value is \"<role-arn>,<this-provider-arn>\" per tier."
-  value       = local.saml_provider_arn_effective
+  description = "IAM mode: the IAM SAML provider ARN the tier roles trust (the passed-in saml_provider_arn). Empty in SSO mode. The Entra \"Role\" claim value is \"<role-arn>,<this-provider-arn>\" per tier."
+  value       = var.saml_provider_arn
 }

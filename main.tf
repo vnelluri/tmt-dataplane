@@ -47,10 +47,9 @@ module "emr_studio" {
   default_s3_location_kms_key_arn = module.account_baseline.artifacts_kms_key_arn
 
   auth_mode = "IAM"
-  # Federation to Entra: pass the metadata XML to create the SAML provider, or
-  # set saml_provider_arn to an existing one (exactly one is required).
+  # Federation to Entra: the ARN of the IAM SAML provider your admin created
+  # out-of-band (this stack never creates it — see the module).
   saml_provider_arn                       = var.emr_studio_saml_provider_arn
-  saml_metadata_document                  = var.emr_studio_saml_metadata_document
   emr_serverless_runtime_role_arn_pattern = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.name_prefix}-tenant-*-exec"
 }
 

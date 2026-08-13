@@ -24,20 +24,13 @@ locals {
   # reach the Studio access URL and sign in through your IdP). See the README.
   is_sso = var.auth_mode == "SSO"
   is_iam = var.auth_mode == "IAM"
-
-  # IAM mode: the SAML provider the tier roles trust — created here from the
-  # metadata document, or referenced by ARN. one() yields null for the absent
-  # branch; the precondition below guarantees exactly one source in IAM mode.
-  create_saml_provider        = local.is_iam && var.saml_provider_arn == "" && var.saml_metadata_document != ""
-  saml_provider_arn_effective = var.saml_provider_arn != "" ? var.saml_provider_arn : one(aws_iam_saml_provider.entra[*].arn)
 }
 
-resource "aws_iam_saml_provider" "entra" {
-  count                  = local.create_saml_provider ? 1 : 0
-  name                   = "${var.name_prefix}-emr-studio-entra"
-  saml_metadata_document = var.saml_metadata_document
-  tags                   = var.tags
-}
+# NOTE: the IAM SAML provider (Entra) is created out-of-band by an IAM admin and
+# referenced here by ARN (var.saml_provider_arn). This module deliberately never
+# calls iam:CreateSAMLProvider — it is a sensitive, account-global identity
+# resource, and a permissions boundary may deny its creation (the same class of
+# block that pushed us off SSO). See docs/EMR_STUDIO_FEDERATION_REQUEST.md.
 
 # ── Security groups ───────────────────────────────────────────────────────────
 # Two-SG model required by EMR Studio: the Workspace (notebook editor UI) only
@@ -303,8 +296,8 @@ locals {
 # Cross-variable invariants (Terraform < 1.9 can't reference other variables in
 # a variable validation block, so enforce them here):
 #  - create_studio = false ⇒ studio_id/studio_url supplied (admin-owned Studio).
-#  - auth_mode = "IAM" ⇒ a SAML provider source supplied (the IdP the tier
-#    roles federate to).
+#  - auth_mode = "IAM" ⇒ saml_provider_arn supplied (the admin-created IdP the
+#    tier roles federate to).
 resource "terraform_data" "require_external_studio" {
   lifecycle {
     precondition {
@@ -312,8 +305,8 @@ resource "terraform_data" "require_external_studio" {
       error_message = "create_studio = false requires both studio_id and studio_url (the admin-created Studio's identifiers)."
     }
     precondition {
-      condition     = var.auth_mode != "IAM" || var.saml_provider_arn != "" || var.saml_metadata_document != ""
-      error_message = "auth_mode = \"IAM\" requires a SAML provider: set saml_provider_arn (existing) or saml_metadata_document (to create one)."
+      condition     = var.auth_mode != "IAM" || var.saml_provider_arn != ""
+      error_message = "auth_mode = \"IAM\" requires saml_provider_arn — the ARN of the IAM SAML provider (Entra) your admin created out-of-band."
     }
   }
 }
@@ -375,7 +368,7 @@ data "aws_iam_policy_document" "saml_assume" {
     actions = ["sts:AssumeRoleWithSAML", "sts:SetSourceIdentity", "sts:TagSession"]
     principals {
       type        = "Federated"
-      identifiers = [local.saml_provider_arn_effective]
+      identifiers = [var.saml_provider_arn]
     }
     condition {
       test     = "StringEquals"
