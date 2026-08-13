@@ -55,13 +55,15 @@ variable "session_identity_type" {
 
 variable "auth_mode" {
   description = <<-EOT
-    EMR Studio authentication mode. "IAM" (the default — no Identity Center; the
-    backend presigns a URL after assuming a per-tier role, so this REQUIRES
-    backend_principal_arns and ignores session_mappings) or "SSO" (IAM Identity
-    Center — uses user_role + session_mappings). IAM mode avoids the sso: writes
-    that a locked-down CI/CD role can't perform, at the cost of the backend
-    calling the EMR Studio API at launch time. See the module README
-    "IAM authentication mode".
+    EMR Studio authentication mode. "IAM" (the default — no Identity Center) or
+    "SSO" (IAM Identity Center — uses user_role + session_mappings). In IAM mode
+    users reach the Studio through its access URL and sign in via IAM federation
+    to your IdP; this module creates per-tier roles (basic/intermediate) the
+    federated users assume via sts:AssumeRoleWithSAML, so IAM mode REQUIRES a
+    SAML provider (saml_provider_arn or saml_metadata_document) and ignores
+    session_mappings. IAM mode avoids the sso: writes a locked-down CI/CD role
+    can't perform, and the backend makes no EMR Studio API call. See the module
+    README "IAM authentication mode".
   EOT
   type        = string
   default     = "IAM"
@@ -72,10 +74,20 @@ variable "auth_mode" {
   }
 }
 
-variable "backend_principal_arns" {
-  description = "IAM mode only: principals (e.g. the backend task role ARN) allowed to assume the basic/intermediate tier roles to presign Studio URLs. Required when auth_mode = \"IAM\"."
-  type        = list(string)
-  default     = []
+# IAM mode: the SAML identity provider (your Entra tenant, federated into this
+# AWS account) that the tier roles trust. Supply the ARN of an existing IAM SAML
+# provider, OR the federation metadata document to have this module create one —
+# exactly one is required when auth_mode = "IAM".
+variable "saml_provider_arn" {
+  description = "IAM mode: ARN of an existing IAM SAML identity provider (Entra) the tier roles trust for sts:AssumeRoleWithSAML. Leave empty to create one from saml_metadata_document."
+  type        = string
+  default     = ""
+}
+
+variable "saml_metadata_document" {
+  description = "IAM mode: Entra federation metadata XML (contents). When set (and saml_provider_arn is empty), this module creates the IAM SAML provider from it. Empty to reference an existing provider via saml_provider_arn instead."
+  type        = string
+  default     = ""
 }
 
 variable "emr_serverless_runtime_role_arn_pattern" {

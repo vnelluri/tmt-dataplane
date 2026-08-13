@@ -28,15 +28,15 @@ services.
   identity with full ARNs — the tenant's key ARN reaches the backend via the
   provisioning write-back)
 
-**Platform-global EMR Studio** (root `module.emr_studio`, sourced from the tmt
-monorepo's `backend/iac-emr-studio`, IAM auth mode) — applied here because it is
-applied-once-global like the baseline, lives next to the EMR Serverless apps its
-Workspaces attach to, and stores Workspaces in this account's artifacts bucket.
-The backend assumes its `basic`/`intermediate` tier roles (which trust
-`backend_task_role_arn`) and presigns — no Identity Center. Wire
-`emr_studio_id` + `emr_studio_tier_role_arns` (root outputs) into the backend's
-`EMR_STUDIO_ID` / `EMR_STUDIO_{BASIC,INTERMEDIATE}_ROLE_ARN` and `backend/iac`'s
-`emr_studio_tier_role_arns`.
+**Platform-global EMR Studio** (root `module.emr_studio`, in `modules/emr-studio`,
+IAM auth mode) — applied here because it is applied-once-global like the
+baseline, lives next to the EMR Serverless apps its Workspaces attach to, and
+stores Workspaces in this account's artifacts bucket. No Identity Center: users
+reach the Studio access URL and federate in through Entra (SAML), assuming the
+`basic`/`intermediate` tier roles via `AssumeRoleWithSAML`. The backend makes no
+EMR Studio API call. Wire the `emr_studio_url` root output into the backend's
+`EMR_STUDIO_URL`; hand `emr_studio_tier_role_arns` + `emr_studio_saml_provider_arn`
+to the Entra admin (`docs/EMR_STUDIO_FEDERATION_REQUEST.md` in the tmt monorepo).
 
 **`modules/tenant`** — one instance per tenant (`for_each` over `var.tenants`):
 

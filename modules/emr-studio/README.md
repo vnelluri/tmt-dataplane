@@ -5,9 +5,10 @@ into for notebook sessions. Applied by this repo's root (`module.emr_studio`),
 in the dataplane account next to the EMR Serverless apps it attaches to. The
 control-plane backend only **consumes** its outputs (it never applies it).
 
-**`auth_mode` defaults to `"IAM"`** (no Identity Center — the backend presigns
-per user; see "IAM authentication mode" below). Set `auth_mode = "SSO"` for the
-Identity Center path (see "Prerequisites" and "Admin-owned Studio").
+**`auth_mode` defaults to `"IAM"`** (no Identity Center — users federate in via
+SAML and the backend just deep-links the access URL; see "IAM authentication
+mode" below). Set `auth_mode = "SSO"` for the Identity Center path (see
+"Prerequisites" and "Admin-owned Studio").
 
 This is a **module** (no provider/backend blocks). The root already wires it
 (default IAM mode):
@@ -21,12 +22,14 @@ module "emr_studio" {
   subnet_ids          = var.subnet_ids
   default_s3_location = "s3://${var.artifacts_bucket}/emr-studio-workspaces"
 
-  # IAM mode (default) requires the principal(s) allowed to presign:
-  backend_principal_arns = [var.backend_task_role_arn]
+  # IAM mode (default) requires a SAML provider (Entra) — supply exactly one:
+  saml_provider_arn = var.emr_studio_saml_provider_arn        # existing IdP, OR
+  # saml_metadata_document = var.emr_studio_saml_metadata_document  # create one
 }
 
-# Wire the outputs into the backend (see "IAM authentication mode"):
-#   module.emr_studio.studio_id, module.emr_studio.tier_role_arns
+# Wire the outputs:
+#   module.emr_studio.url            -> backend EMR_STUDIO_URL
+#   module.emr_studio.tier_role_arns + .saml_provider_arn -> Entra "Role" claim
 ```
 
 For the SSO (Identity Center) path instead, set `auth_mode = "SSO"` and supply
@@ -83,38 +86,46 @@ admin → admin creates the Studio → re-apply with `studio_id`/`studio_url` se
 
 ## IAM authentication mode (`auth_mode = "IAM"`)
 
-An alternative to Identity Center entirely. In SSO mode `CreateStudio` registers
-the Studio in IAM Identity Center (the `sso:` writes a locked-down CI/CD role
-can't do); IAM mode has **no Identity Center**, so none of that applies — no
-federation, no SCIM, no session mappings, no `sso:` permissions.
+No Identity Center. In SSO mode `CreateStudio` registers the Studio in IAM
+Identity Center (the `sso:` writes a locked-down CI/CD role can't do); IAM mode
+makes **no `sso:` calls** — access is through the Studio **access URL** +
+**IAM federation to your IdP (Entra)**.
 
-Set `auth_mode = "IAM"` and the module instead creates **two assumable tier
-roles** (`…-emr-studio-basic`, `…-emr-studio-intermediate`) trusted by
-`backend_principal_arns`. The backend assumes the tier role for a user's role
-(`RoleSessionName` = the user's stable id) and calls
-`elasticmapreduce:CreateStudioPresignedUrl` to deep-link them in — mirroring the
-SageMaker presign path. Per-user Workspace ownership still holds: EMR Studio tags
-each Workspace with `creatorUserId = ${aws:userId}`, which embeds the
-`RoleSessionName`, so the tier roles' collaboration permissions are creator-scoped.
+Users reach the Studio access URL, federate in through the SAML IdP, and assume
+one of the two per-tier roles (`…-emr-studio-basic`, `…-emr-studio-intermediate`)
+via **`sts:AssumeRoleWithSAML`** — the Entra "Role" claim maps a user's group to
+the basic or intermediate role ARN. AWS's hosted flow then calls
+`CreateStudioPresignedUrl` (authorized by the role's own permission) to sign the
+user in. **The backend makes no EMR Studio API call** — it only deep-links the
+access URL (`CreateStudioPresignedUrl` is not in the boto3 SDK). Per-user
+Workspace ownership holds: EMR Studio tags each Workspace with
+`creatorUserId = ${aws:userId}`, which embeds the federated session identity, so
+the tier roles' collaboration permissions are creator-scoped.
 
 ```hcl
 module "emr_studio" {
-  source                 = "./modules/emr-studio"
-  name_prefix            = var.name_prefix
-  vpc_id                 = var.vpc_id
-  subnet_ids             = var.subnet_ids
-  default_s3_location    = "s3://${var.artifacts_bucket}/emr-studio-workspaces"
-  auth_mode              = "IAM"
-  backend_principal_arns = [var.backend_task_role_arn]   # who may presign
-  # session_mappings is ignored in IAM mode
+  source              = "./modules/emr-studio"
+  name_prefix         = var.name_prefix
+  vpc_id              = var.vpc_id
+  subnet_ids          = var.subnet_ids
+  default_s3_location = "s3://${var.artifacts_bucket}/emr-studio-workspaces"
+  auth_mode           = "IAM"
+  # Federation to Entra — supply exactly one (session_mappings is ignored):
+  saml_provider_arn      = var.emr_studio_saml_provider_arn      # existing IdP, OR
+  saml_metadata_document = var.emr_studio_saml_metadata_document # create one
 }
 ```
 
-Wire back: feed `tier_role_arns` to the backend's `EMR_STUDIO_BASIC_ROLE_ARN` /
-`EMR_STUDIO_INTERMEDIATE_ROLE_ARN` and `emr_studio_tier_role_arns` (so the task
-role gets `sts:AssumeRole`), set `EMR_AUTH_MODE=IAM` and `EMR_STUDIO_ID`. Full
-design + trade-offs (attribution, MRM) in the tmt monorepo's
-`docs/EMR_STUDIO_IAM_MODE.md`.
+`saml_provider_arn` (admin-created provider, referenced) is the safer path — a
+permissions boundary may deny `iam:CreateSAMLProvider`, the same class of block
+that pushed us off SSO. Use `saml_metadata_document` only if the CI/CD role is
+allowed to create the provider.
+
+Wire back: set the backend's `EMR_STUDIO_URL` to the module's **`url`** output
+(the backend needs nothing else) and `EMR_AUTH_MODE=IAM`. Hand
+`tier_role_arns` + `saml_provider_arn` to the Entra admin for the "Role" claim.
+Full design + the Entra setup steps in the tmt monorepo's
+`docs/EMR_STUDIO_IAM_MODE.md` and `docs/EMR_STUDIO_FEDERATION_REQUEST.md`.
 
 ## Known limitation (matches the platform README)
 
@@ -128,25 +139,28 @@ a user's group is mapped to.
 
 ## What this module does NOT do
 
-- Create or manage IAM Identity Center itself, its external IdP federation,
-  or its users/groups.
+- Configure the Entra tenant / SAML app itself, or manage its users/groups.
+  (In IAM mode it *creates the AWS-side IAM SAML provider* from the metadata you
+  supply — or references one you pass by ARN — but the Entra-side app, claims,
+  and group assignments are the admin's job: `docs/EMR_STUDIO_FEDERATION_REQUEST.md`.)
+- Create or manage IAM Identity Center itself (SSO mode's IdP).
 - Create per-tenant EMR Serverless applications — those come from
   `tmt-dataplane`, same as job-submission compute (see `backend/iac/README.md`).
 - Grant the backend any EMR Studio API permissions — the backend only reads
-  the static URL from SSM and redirects the browser; no API calls happen
-  against EMR Studio at request time.
+  the access URL from SSM and redirects the browser; no API calls happen
+  against EMR Studio at request time (in either mode).
 
 ## Resources created
 
 - Two security groups (`engine`, `workspace`) wired per AWS's documented
   two-SG model (Workspace → Engine on 18888 only).
-- A service role (assumed by the EMR Studio control plane) and a shared user
-  role (assumed by federated sessions), each scoped to the Workspace S3
-  location plus read/attach access to EMR Serverless.
-- Two customer-managed session policies (`basic`, `intermediate`) used by
-  `session_mappings`.
-- The `aws_emr_studio` resource itself (unless `create_studio = false`) and its
-  `aws_emr_studio_session_mapping` entries.
+- A service role (assumed by the EMR Studio control plane).
+- **SSO mode:** a shared `user_role`, two customer-managed session policies
+  (`basic`, `intermediate`), and `aws_emr_studio_session_mapping` entries.
+- **IAM mode:** two per-tier roles (`basic`, `intermediate`) trusted by the
+  SAML provider for `sts:AssumeRoleWithSAML`, plus (when
+  `saml_metadata_document` is set) the `aws_iam_saml_provider` itself.
+- The `aws_emr_studio` resource (unless `create_studio = false`).
 
 ## Variables of note
 
@@ -164,7 +178,9 @@ a user's group is mapped to.
 - `studio_id` / `studio_url` — identifiers of an externally created Studio,
   used only when `create_studio = false`.
 - `auth_mode` — `"IAM"` (default) or `"SSO"`; see "IAM authentication mode".
-- `backend_principal_arns` — IAM mode only; principals allowed to assume the
-  tier roles. **Required** when `auth_mode = "IAM"`.
+- `saml_provider_arn` / `saml_metadata_document` — IAM mode only; the SAML IdP
+  (Entra) the tier roles federate to. Supply **exactly one** — the ARN of an
+  existing provider, or the metadata XML to have the module create one.
+  **Required** when `auth_mode = "IAM"`.
 - `emr_serverless_runtime_role_arn_pattern` — IAM mode only; role(s) the
   intermediate tier may `iam:PassRole` to start jobs (default `*`).

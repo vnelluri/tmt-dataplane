@@ -31,10 +31,11 @@ data "aws_caller_identity" "current" {}
 
 # ── Platform-global EMR Studio (IAM auth mode) ──────────────────────────────
 # Applied-once, next to the EMR Serverless apps it attaches to and the
-# artifacts bucket its Workspaces store in. IAM mode: the backend assumes the
-# tier roles (which trust the backend task role) and presigns — no Identity
-# Center. The module lives here (modules/emr-studio); the control-plane backend
-# only consumes its outputs (EMR_STUDIO_ID, tier role ARNs).
+# artifacts bucket its Workspaces store in. IAM mode: users reach the Studio
+# access URL and federate in through Entra (SAML); they assume the per-tier
+# roles via AssumeRoleWithSAML — no Identity Center, and the backend makes no
+# EMR Studio API call (it only deep-links EMR_STUDIO_URL = this module's url
+# output). See docs/EMR_STUDIO_FEDERATION_REQUEST.md for the Entra setup.
 module "emr_studio" {
   source = "./modules/emr-studio"
 
@@ -45,8 +46,11 @@ module "emr_studio" {
   # Workspace autosave writes to the SSE-KMS artifacts bucket — grant its CMK.
   default_s3_location_kms_key_arn = module.account_baseline.artifacts_kms_key_arn
 
-  auth_mode                               = "IAM"
-  backend_principal_arns                  = [var.backend_task_role_arn]
+  auth_mode = "IAM"
+  # Federation to Entra: pass the metadata XML to create the SAML provider, or
+  # set saml_provider_arn to an existing one (exactly one is required).
+  saml_provider_arn                       = var.emr_studio_saml_provider_arn
+  saml_metadata_document                  = var.emr_studio_saml_metadata_document
   emr_serverless_runtime_role_arn_pattern = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.name_prefix}-tenant-*-exec"
 }
 
@@ -68,15 +72,21 @@ output "event_bus_arn" {
   value = module.account_baseline.event_bus_arn
 }
 
-# Wire these into the control-plane backend, like runtime_role_arn/event_bus_arn:
-#   EMR_STUDIO_ID, EMR_STUDIO_BASIC_ROLE_ARN, EMR_STUDIO_INTERMEDIATE_ROLE_ARN,
-#   and backend/iac's emr_studio_tier_role_arns (for sts:AssumeRole).
-output "emr_studio_id" {
-  description = "IAM-mode EMR Studio id — set the backend's EMR_STUDIO_ID."
-  value       = module.emr_studio.studio_id
+# The backend only needs the access URL: set the control-plane backend's
+# EMR_STUDIO_URL (SSM) to this. It makes no EMR Studio API call.
+output "emr_studio_url" {
+  description = "IAM-mode EMR Studio access URL — set the backend's EMR_STUDIO_URL."
+  value       = module.emr_studio.url
+}
+
+# Entra federation config (hand to the Entra/IAM admin — see
+# docs/EMR_STUDIO_FEDERATION_REQUEST.md). NOT consumed by the backend.
+output "emr_studio_saml_provider_arn" {
+  description = "IAM SAML provider ARN the tier roles trust — the second half of each Entra \"Role\" claim value."
+  value       = module.emr_studio.saml_provider_arn
 }
 
 output "emr_studio_tier_role_arns" {
-  description = "basic/intermediate tier role ARNs — set the backend's EMR_STUDIO_{BASIC,INTERMEDIATE}_ROLE_ARN and backend/iac emr_studio_tier_role_arns."
+  description = "basic/intermediate federated role ARNs users assume via SAML — map Entra groups to these in the \"Role\" claim."
   value       = module.emr_studio.tier_role_arns
 }

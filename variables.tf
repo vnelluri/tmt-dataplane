@@ -56,6 +56,21 @@ variable "security_group_ids" {
   type        = list(string)
 }
 
+# EMR Studio IAM-mode federation to Entra: supply exactly one. The metadata XML
+# creates the SAML provider here; the ARN references an existing one. See
+# docs/EMR_STUDIO_FEDERATION_REQUEST.md.
+variable "emr_studio_saml_provider_arn" {
+  description = "ARN of an existing IAM SAML provider (Entra) for EMR Studio federation. Leave empty to create one from emr_studio_saml_metadata_document."
+  type        = string
+  default     = ""
+}
+
+variable "emr_studio_saml_metadata_document" {
+  description = "Entra federation metadata XML (contents) to create the IAM SAML provider for EMR Studio. Empty to reference an existing one via emr_studio_saml_provider_arn."
+  type        = string
+  default     = ""
+}
+
 
 # The reconcile script regenerates tenants.auto.tfvars.json from the platform
 # API (GET /tenants) on every pipeline run — the API is the source of truth

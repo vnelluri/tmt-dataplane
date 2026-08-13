@@ -39,6 +39,11 @@ output "auth_mode" {
 }
 
 output "tier_role_arns" {
-  description = "IAM mode: tier name (basic/intermediate) -> assumable role ARN the backend presigns with. Empty map in SSO mode. Feed these to the backend's EMR_STUDIO_BASIC_ROLE_ARN / EMR_STUDIO_INTERMEDIATE_ROLE_ARN and grant the backend task role sts:AssumeRole on them."
+  description = "IAM mode: tier name (basic/intermediate) -> federated role ARN users assume via SAML. Empty map in SSO mode. The backend does NOT use these; give them to the Entra admin to map groups to roles in the SAML \"Role\" claim (see docs/EMR_STUDIO_FEDERATION_REQUEST.md)."
   value       = { for k, r in aws_iam_role.tier : k => r.arn }
+}
+
+output "saml_provider_arn" {
+  description = "IAM mode: the IAM SAML provider ARN the tier roles trust (created here or the passed-in saml_provider_arn). Null in SSO mode. The Entra \"Role\" claim value is \"<role-arn>,<this-provider-arn>\" per tier."
+  value       = local.saml_provider_arn_effective
 }

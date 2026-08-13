@@ -265,6 +265,19 @@ data "aws_iam_policy_document" "codebuild" {
     actions   = ["iam:PassRole"]
     resources = ["arn:aws:iam::${local.account_id}:role/${var.name_prefix}-emr-studio-*"]
   }
+  # EMR Studio IAM-mode federation: only needed when the emr-studio module
+  # CREATES the SAML provider (saml_metadata_document). If an admin creates it
+  # out-of-band and you reference saml_provider_arn instead, this is unused — and
+  # a permissions boundary may deny iam:CreateSAMLProvider, so admin-created +
+  # referenced is the safer path (see docs/EMR_STUDIO_FEDERATION_REQUEST.md).
+  statement {
+    sid = "ManageEmrStudioSamlProvider"
+    actions = [
+      "iam:CreateSAMLProvider", "iam:GetSAMLProvider", "iam:UpdateSAMLProvider",
+      "iam:DeleteSAMLProvider", "iam:TagSAMLProvider", "iam:ListSAMLProviderTags",
+    ]
+    resources = ["arn:aws:iam::${local.account_id}:saml-provider/${var.name_prefix}-emr-studio-*"]
+  }
   statement {
     sid       = "ReadApiToken"
     actions   = ["secretsmanager:GetSecretValue"]

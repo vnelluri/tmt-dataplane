@@ -19,11 +19,24 @@ locals {
   s3_objects_arn      = local.s3_prefix == "" ? "${local.s3_bucket_arn}/*" : "${local.s3_bucket_arn}/${local.s3_prefix}/*"
 
   # Authentication mode gates two disjoint resource sets: SSO uses a shared
-  # user_role + session policies + session mappings (Identity Center); IAM
-  # uses per-tier assumable roles the backend presigns with (no Identity
-  # Center). See the module README.
+  # user_role + session policies + session mappings (Identity Center); IAM uses
+  # per-tier roles federated users assume via SAML (no Identity Center — users
+  # reach the Studio access URL and sign in through your IdP). See the README.
   is_sso = var.auth_mode == "SSO"
   is_iam = var.auth_mode == "IAM"
+
+  # IAM mode: the SAML provider the tier roles trust — created here from the
+  # metadata document, or referenced by ARN. one() yields null for the absent
+  # branch; the precondition below guarantees exactly one source in IAM mode.
+  create_saml_provider        = local.is_iam && var.saml_provider_arn == "" && var.saml_metadata_document != ""
+  saml_provider_arn_effective = var.saml_provider_arn != "" ? var.saml_provider_arn : one(aws_iam_saml_provider.entra[*].arn)
+}
+
+resource "aws_iam_saml_provider" "entra" {
+  count                  = local.create_saml_provider ? 1 : 0
+  name                   = "${var.name_prefix}-emr-studio-entra"
+  saml_metadata_document = var.saml_metadata_document
+  tags                   = var.tags
 }
 
 # ── Security groups ───────────────────────────────────────────────────────────
@@ -290,7 +303,8 @@ locals {
 # Cross-variable invariants (Terraform < 1.9 can't reference other variables in
 # a variable validation block, so enforce them here):
 #  - create_studio = false ⇒ studio_id/studio_url supplied (admin-owned Studio).
-#  - auth_mode = "IAM" ⇒ backend_principal_arns supplied (who may presign).
+#  - auth_mode = "IAM" ⇒ a SAML provider source supplied (the IdP the tier
+#    roles federate to).
 resource "terraform_data" "require_external_studio" {
   lifecycle {
     precondition {
@@ -298,8 +312,8 @@ resource "terraform_data" "require_external_studio" {
       error_message = "create_studio = false requires both studio_id and studio_url (the admin-created Studio's identifiers)."
     }
     precondition {
-      condition     = var.auth_mode != "IAM" || length(var.backend_principal_arns) > 0
-      error_message = "auth_mode = \"IAM\" requires backend_principal_arns (the principals allowed to assume the tier roles and presign)."
+      condition     = var.auth_mode != "IAM" || var.saml_provider_arn != "" || var.saml_metadata_document != ""
+      error_message = "auth_mode = \"IAM\" requires a SAML provider: set saml_provider_arn (existing) or saml_metadata_document (to create one)."
     }
   }
 }
@@ -344,20 +358,29 @@ resource "aws_emr_studio_session_mapping" "this" {
   session_policy_arn = local.session_policy_arns[each.value]
 }
 
-# ── IAM auth mode: per-tier assumable roles ─────────────────────────────────
-# In IAM mode there is no Identity Center. The backend assumes one of these
-# roles (with RoleSessionName = the user's STABLE id, so EMR Studio's
-# creatorUserId=${aws:userId} Workspace ownership is per-user and stable across
-# logins) and calls emr:CreateStudioPresignedUrl to deep-link the user in.
-# "basic" = browse + attach + run notebooks; "intermediate" adds EMR Serverless
-# application lifecycle — mirroring the SSO session-policy tiers.
-data "aws_iam_policy_document" "backend_assume" {
+# ── IAM auth mode: per-tier federated roles ─────────────────────────────────
+# In IAM mode there is no Identity Center. A user reaches the Studio access URL,
+# federates in through your SAML IdP (Entra), and assumes one of these roles via
+# sts:AssumeRoleWithSAML — the Entra "Role" claim maps the user's group to the
+# basic or intermediate role ARN. AWS's hosted flow then calls
+# CreateStudioPresignedUrl (authorized by the role's own permission) to sign the
+# user in; the backend makes no EMR Studio API call. EMR Studio tags each
+# Workspace with creatorUserId=${aws:userId} — which embeds the federated
+# session name (the Entra NameID / SourceIdentity) — so Workspace ownership is
+# per-user. "basic" = browse + attach + run notebooks; "intermediate" adds EMR
+# Serverless application lifecycle — mirroring the SSO session-policy tiers.
+data "aws_iam_policy_document" "saml_assume" {
   count = local.is_iam ? 1 : 0
   statement {
-    actions = ["sts:AssumeRole", "sts:TagSession"]
+    actions = ["sts:AssumeRoleWithSAML", "sts:SetSourceIdentity", "sts:TagSession"]
     principals {
-      type        = "AWS"
-      identifiers = var.backend_principal_arns
+      type        = "Federated"
+      identifiers = [local.saml_provider_arn_effective]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "SAML:aud"
+      values   = ["https://signin.aws.amazon.com/saml"]
     }
   }
 }
@@ -463,7 +486,7 @@ locals {
 resource "aws_iam_role" "tier" {
   for_each           = local.iam_tier_policy_json
   name               = "${var.name_prefix}-emr-studio-${each.key}"
-  assume_role_policy = data.aws_iam_policy_document.backend_assume[0].json
+  assume_role_policy = data.aws_iam_policy_document.saml_assume[0].json
   tags               = var.tags
 }
 
