@@ -16,7 +16,7 @@ variable "artifacts_bucket" {
 }
 
 variable "backend_task_role_arn" {
-  description = "Backend task role ARN (output of tmt//backend/iac) — trusted to PutEvents, assume the runtime role, and use the KMS keys."
+  description = "Backend task role ARN (output of tmt//backend/iac) — trusted to assume the runtime role and use the KMS keys."
   type        = string
 }
 
@@ -31,14 +31,10 @@ variable "repo_clone_url" {
   type        = string
 }
 
-variable "platform_api_url" {
-  description = "Platform API base URL for the reconcile script."
+variable "tenant_role_permissions_boundary_arn" {
+  description = "Org permissions boundary the backend must attach to runtime-created tenant execution roles (must match the backend's TENANT_ROLE_PERMISSIONS_BOUNDARY_ARN). Empty = no boundary enforcement."
   type        = string
-}
-
-variable "platform_api_token_secret_arn" {
-  description = "Secrets Manager ARN of the PlatformAdmin API token."
-  type        = string
+  default     = ""
 }
 
 variable "vpc_id" {
@@ -51,11 +47,6 @@ variable "subnet_ids" {
   type        = list(string)
 }
 
-variable "security_group_ids" {
-  description = "Security groups for EMR Serverless workers."
-  type        = list(string)
-}
-
 # EMR Studio IAM-mode federation to Entra: the ARN of the IAM SAML provider your
 # admin created out-of-band. This stack never creates it (no iam:CreateSAMLProvider).
 # See docs/EMR_STUDIO_FEDERATION_REQUEST.md.
@@ -63,18 +54,4 @@ variable "emr_studio_saml_provider_arn" {
   description = "ARN of the admin-created IAM SAML provider (Entra) for EMR Studio federation. Required to apply the emr_studio module in IAM mode."
   type        = string
   default     = ""
-}
-
-
-# The reconcile script regenerates tenants.auto.tfvars.json from the platform
-# API (GET /tenants) on every pipeline run — the API is the source of truth
-# for membership; per-tenant capacity overrides live here.
-variable "tenants" {
-  description = "Tenants to provision, keyed by tenantId."
-  type = map(object({
-    name                 = string
-    max_concurrent_vcpus = optional(number, 64)
-    max_memory_gb        = optional(number)
-  }))
-  default = {}
 }

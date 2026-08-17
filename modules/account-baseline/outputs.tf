@@ -8,17 +8,12 @@ output "artifacts_kms_key_arn" {
   value       = aws_kms_key.artifacts.arn
 }
 
-output "event_bus_arn" {
-  description = "Set the backend's TENANT_PROVISIONING_EVENT_BUS to this ARN."
-  value       = aws_cloudwatch_event_bus.provisioning.arn
-}
-
 output "runtime_role_arn" {
-  description = "Cross-account runtime role for tenant-tagged job operations."
+  description = "Cross-account runtime role for tenant-tagged job operations AND tenant provisioning/deprovisioning — set the backend's DATAPLANE_RUNTIME_ROLE_ARN to this."
   value       = aws_iam_role.runtime.arn
 }
 
 output "codebuild_project_name" {
-  description = "Provisioner CodeBuild project (also runnable manually to reconcile)."
+  description = "Apply-pipeline CodeBuild project for the global stack (run manually or from CI)."
   value       = aws_codebuild_project.provisioner.name
 }

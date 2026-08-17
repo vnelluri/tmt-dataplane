@@ -1,30 +1,16 @@
+# Per-tenant resources (EMR Serverless app, execution role, KMS key, S3
+# prefix) are NOT declared here: the control-plane backend creates and tears
+# them down directly via boto3 through the runtime role (tmt POST /tenants /
+# DELETE /tenants). This root applies only the global, once-per-account layer.
 module "account_baseline" {
   source = "./modules/account-baseline"
 
-  name_prefix                   = var.name_prefix
-  artifacts_bucket              = var.artifacts_bucket
-  job_token_secret_prefix       = var.job_token_secret_prefix
-  backend_task_role_arn         = var.backend_task_role_arn
-  repo_clone_url                = var.repo_clone_url
-  platform_api_url              = var.platform_api_url
-  platform_api_token_secret_arn = var.platform_api_token_secret_arn
-}
-
-module "tenant" {
-  source   = "./modules/tenant"
-  for_each = var.tenants
-
-  tenant_id               = each.key
-  tenant_name             = each.value.name
-  name_prefix             = var.name_prefix
-  artifacts_bucket        = module.account_baseline.artifacts_bucket
-  artifacts_kms_key_arn   = module.account_baseline.artifacts_kms_key_arn
-  job_token_secret_prefix = var.job_token_secret_prefix
-  backend_task_role_arn   = var.backend_task_role_arn
-  max_concurrent_vcpus    = each.value.max_concurrent_vcpus
-  max_memory_gb           = each.value.max_memory_gb
-  subnet_ids              = var.subnet_ids
-  security_group_ids      = var.security_group_ids
+  name_prefix                          = var.name_prefix
+  artifacts_bucket                     = var.artifacts_bucket
+  job_token_secret_prefix              = var.job_token_secret_prefix
+  backend_task_role_arn                = var.backend_task_role_arn
+  repo_clone_url                       = var.repo_clone_url
+  tenant_role_permissions_boundary_arn = var.tenant_role_permissions_boundary_arn
 }
 
 data "aws_caller_identity" "current" {}
@@ -53,22 +39,9 @@ module "emr_studio" {
   emr_serverless_runtime_role_arn_pattern = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.name_prefix}-tenant-*-exec"
 }
 
-# Consumed by scripts/provision-tenants.sh for the write-back step
-# (PUT /tenants/{id}/provisioning on the platform API).
-output "tenants" {
-  description = "Per-tenant provisioned resource IDs."
-  value = {
-    for id, mod in module.tenant : id => {
-      emrApplicationId = mod.emr_application_id
-      executionRoleArn = mod.execution_role_arn
-      s3BucketName     = mod.s3_prefix
-      kmsKeyArn        = mod.kms_key_arn
-    }
-  }
-}
-
-output "event_bus_arn" {
-  value = module.account_baseline.event_bus_arn
+output "runtime_role_arn" {
+  description = "Set the backend's DATAPLANE_RUNTIME_ROLE_ARN to this — used for job operations and tenant provisioning/deprovisioning."
+  value       = module.account_baseline.runtime_role_arn
 }
 
 # The backend only needs the access URL: set the control-plane backend's

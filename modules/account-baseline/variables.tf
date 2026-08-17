@@ -16,7 +16,7 @@ variable "job_token_secret_prefix" {
 }
 
 variable "backend_task_role_arn" {
-  description = "The control-plane backend task role ARN (output of tmt//backend/iac) — trusted to PutEvents and to assume the runtime role."
+  description = "The control-plane backend task role ARN (output of tmt//backend/iac) — trusted to assume the runtime role and use the artifacts CMK."
   type        = string
 }
 
@@ -26,19 +26,15 @@ variable "repo_clone_url" {
 }
 
 variable "repo_branch" {
-  description = "Branch the provisioning pipeline builds from."
+  description = "Branch the apply pipeline builds from."
   type        = string
   default     = "main"
 }
 
-variable "platform_api_url" {
-  description = "Base URL of the platform API, used by the reconcile script (GET /tenants, PUT /tenants/{id}/provisioning)."
+variable "tenant_role_permissions_boundary_arn" {
+  description = "Org permissions boundary the backend must attach to runtime-created tenant execution roles (backend setting TENANT_ROLE_PERMISSIONS_BOUNDARY_ARN must match). Empty = no boundary enforcement."
   type        = string
-}
-
-variable "platform_api_token_secret_arn" {
-  description = "Secrets Manager ARN holding a PlatformAdmin API token for the write-back calls."
-  type        = string
+  default     = ""
 }
 
 variable "tags" {

@@ -1,16 +1,18 @@
 # Copy to terraform.tfvars and fill in for this dataplane account.
-region                        = "us-east-1"
-artifacts_bucket              = "ml-platform-artifacts-prod"
-backend_task_role_arn         = "arn:aws:iam::111111111111:role/ml-platform-backend-task-role"
-repo_clone_url                = "https://github.com/vnelluri/tmt-dataplane.git"
-platform_api_url              = "https://ml.example.com"
-platform_api_token_secret_arn = "arn:aws:secretsmanager:us-east-1:222222222222:secret:ml-platform/provisioner-api-token"
-vpc_id                        = "vpc-dddd"
-subnet_ids                    = ["subnet-aaaa", "subnet-bbbb"]
-security_group_ids            = ["sg-cccc"]
+region                = "us-east-1"
+artifacts_bucket      = "ml-platform-artifacts-prod"
+backend_task_role_arn = "arn:aws:iam::111111111111:role/ml-platform-backend-task-role"
+repo_clone_url        = "https://github.com/vnelluri/tmt-dataplane.git"
+vpc_id                = "vpc-dddd"
+subnet_ids            = ["subnet-aaaa", "subnet-bbbb"]
 
-# Per-tenant capacity overrides (tenant *membership* is reconciled from the
-# platform API by scripts/provision-tenants.sh; only overrides live here).
-# tenants = {
-#   "tenant-risk-analytics" = { name = "Risk Analytics", max_concurrent_vcpus = 128 }
-# }
+# EMR Studio IAM-mode federation: ARN of the admin-created SAML provider.
+# emr_studio_saml_provider_arn = "arn:aws:iam::222222222222:saml-provider/ml-platform-emr-studio-entra"
+
+# Org permissions boundary the backend attaches to tenant execution roles it
+# creates (must match the backend's TENANT_ROLE_PERMISSIONS_BOUNDARY_ARN).
+# tenant_role_permissions_boundary_arn = "arn:aws:iam::222222222222:policy/CSEStandardPermissionsBoundary"
+
+# NOTE: per-tenant resources (EMR Serverless app, execution role, KMS key)
+# are created by the control-plane backend directly via the runtime role —
+# there is no tenants map here anymore.

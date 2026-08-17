@@ -1,6 +1,8 @@
-# CodeBuild spec for the tenant provisioner (see modules/account-baseline).
-# Triggered by TenantProvisioningRequested events; safe to run manually or on
-# a schedule — the reconcile is declarative and idempotent.
+# CodeBuild spec for the dataplane apply pipeline (see modules/account-baseline).
+# Applies the global stack (account-baseline + EMR Studio). Safe to run
+# manually or on a schedule — the apply is declarative and idempotent.
+# Per-tenant resources are NOT managed here: the control-plane backend
+# creates/tears them down directly through the runtime role.
 version: 0.2
 
 env:
@@ -16,4 +18,5 @@ phases:
       - terraform -version
   build:
     commands:
-      - bash scripts/provision-tenants.sh
+      - terraform init -input=false
+      - terraform apply -input=false -auto-approve

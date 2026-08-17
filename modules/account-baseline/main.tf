@@ -122,80 +122,10 @@ resource "aws_s3_bucket_policy" "artifacts" {
   depends_on = [aws_s3_bucket_public_access_block.artifacts]
 }
 
-# ── Provisioning event bus: the control-plane backend PutEvents here
-#    cross-account (TENANT_PROVISIONING_EVENT_BUS = this bus's ARN) ──────────
-resource "aws_cloudwatch_event_bus" "provisioning" {
-  name = "${var.name_prefix}-provisioning"
-  tags = local.tags
-}
-
-data "aws_iam_policy_document" "bus_policy" {
-  statement {
-    sid       = "AllowControlPlanePutEvents"
-    actions   = ["events:PutEvents"]
-    resources = [aws_cloudwatch_event_bus.provisioning.arn]
-    principals {
-      type        = "AWS"
-      identifiers = [var.backend_task_role_arn]
-    }
-  }
-}
-
-resource "aws_cloudwatch_event_bus_policy" "provisioning" {
-  event_bus_name = aws_cloudwatch_event_bus.provisioning.name
-  policy         = data.aws_iam_policy_document.bus_policy.json
-}
-
-# ── Rule: TenantProvisioningRequested → CodeBuild reconcile ─────────────────
-resource "aws_cloudwatch_event_rule" "tenant_provisioning" {
-  name           = "${var.name_prefix}-tenant-provisioning"
-  event_bus_name = aws_cloudwatch_event_bus.provisioning.name
-  tags           = local.tags
-
-  event_pattern = jsonencode({
-    source        = ["ml-platform.tenants"]
-    "detail-type" = ["TenantProvisioningRequested"]
-  })
-}
-
-data "aws_iam_policy_document" "events_assume" {
-  statement {
-    actions = ["sts:AssumeRole"]
-    principals {
-      type        = "Service"
-      identifiers = ["events.amazonaws.com"]
-    }
-  }
-}
-
-resource "aws_iam_role" "events_to_codebuild" {
-  name               = "${var.name_prefix}-provisioning-events-role"
-  assume_role_policy = data.aws_iam_policy_document.events_assume.json
-  tags               = local.tags
-}
-
-resource "aws_iam_role_policy" "events_to_codebuild" {
-  name = "start-build"
-  role = aws_iam_role.events_to_codebuild.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["codebuild:StartBuild"]
-      Resource = aws_codebuild_project.provisioner.arn
-    }]
-  })
-}
-
-resource "aws_cloudwatch_event_target" "codebuild" {
-  rule           = aws_cloudwatch_event_rule.tenant_provisioning.name
-  event_bus_name = aws_cloudwatch_event_bus.provisioning.name
-  arn            = aws_codebuild_project.provisioner.arn
-  role_arn       = aws_iam_role.events_to_codebuild.arn
-}
-
-# ── CodeBuild project: runs scripts/provision-tenants.sh (declarative
-#    reconcile of ALL tenants from the platform API) ─────────────────────────
+# ── CodeBuild project: applies this repo's global stack (account-baseline +
+#    EMR Studio). Run manually or from CI — per-tenant resources are NOT
+#    managed here anymore; the control-plane backend creates them directly
+#    through the runtime role below. ────────────────────────────────────────
 data "aws_iam_policy_document" "codebuild_assume" {
   statement {
     actions = ["sts:AssumeRole"]
@@ -212,24 +142,23 @@ resource "aws_iam_role" "codebuild" {
   tags               = local.tags
 }
 
-# The provisioner needs to manage exactly what this repo declares: EMR
-# Serverless apps, tenant-scoped IAM roles, KMS keys/aliases, S3, events, and
-# its own logs/state. Tighten further with a permissions boundary if your
-# account standards require it.
+# The apply pipeline manages exactly what this repo declares: the artifacts
+# bucket + CMK, the runtime role, the EMR Studio stack, and its own
+# logs/state. Per-tenant resources are the backend's job (runtime role), not
+# Terraform's. Tighten further with a permissions boundary if your account
+# standards require it.
 data "aws_iam_policy_document" "codebuild" {
   statement {
-    sid = "ManageTenantResources"
+    sid = "ManageGlobalResources"
     actions = [
-      "emr-serverless:*",
       "kms:*",
       "s3:*",
-      "events:*",
       "logs:*",
     ]
     resources = ["*"]
   }
   statement {
-    sid = "ManageTenantRoles"
+    sid = "ManageStudioAndRuntimeRoles"
     actions = [
       "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:TagRole",
       "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:GetRolePolicy",
@@ -237,10 +166,10 @@ data "aws_iam_policy_document" "codebuild" {
       "iam:ListInstanceProfilesForRole", "iam:UpdateAssumeRolePolicy",
     ]
     resources = [
-      # Per-tenant execution roles, plus the platform-global EMR Studio roles
-      # (service + basic/intermediate tier) the emr_studio module manages.
-      "arn:aws:iam::${local.account_id}:role/${var.name_prefix}-tenant-*-exec",
+      # The platform-global EMR Studio roles (service + basic/intermediate
+      # tier) and the dataplane runtime role this module manages.
       "arn:aws:iam::${local.account_id}:role/${var.name_prefix}-emr-studio-*",
+      "arn:aws:iam::${local.account_id}:role/${var.name_prefix}-dataplane-runtime",
     ]
   }
   # EMR Studio (platform-global, applied here in IAM auth mode): the Studio
@@ -266,14 +195,9 @@ data "aws_iam_policy_document" "codebuild" {
     resources = ["arn:aws:iam::${local.account_id}:role/${var.name_prefix}-emr-studio-*"]
   }
   # NOTE: no iam:*SAMLProvider permissions. The EMR Studio IAM SAML provider is
-  # created out-of-band by an IAM admin and referenced by ARN — the reconcile
-  # pipeline never creates it (a permissions boundary may deny it, and it is a
+  # created out-of-band by an IAM admin and referenced by ARN — this pipeline
+  # never creates it (a permissions boundary may deny it, and it is a
   # sensitive account-global identity resource). See the emr-studio module.
-  statement {
-    sid       = "ReadApiToken"
-    actions   = ["secretsmanager:GetSecretValue"]
-    resources = [var.platform_api_token_secret_arn]
-  }
 }
 
 resource "aws_iam_role_policy" "codebuild" {
@@ -283,8 +207,8 @@ resource "aws_iam_role_policy" "codebuild" {
 }
 
 resource "aws_codebuild_project" "provisioner" {
-  name          = "${var.name_prefix}-tenant-provisioner"
-  description   = "Reconciles per-tenant dataplane resources from the platform API."
+  name          = "${var.name_prefix}-dataplane-apply"
+  description   = "Applies the dataplane global stack (account-baseline + EMR Studio). Run manually or from CI."
   service_role  = aws_iam_role.codebuild.arn
   build_timeout = 30
   tags          = local.tags
@@ -300,16 +224,6 @@ resource "aws_codebuild_project" "provisioner" {
     compute_type = "BUILD_GENERAL1_SMALL"
     image        = "aws/codebuild/amazonlinux2-x86_64-standard:5.0"
     type         = "LINUX_CONTAINER"
-
-    environment_variable {
-      name  = "PLATFORM_API_URL"
-      value = var.platform_api_url
-    }
-    environment_variable {
-      name  = "PLATFORM_API_TOKEN"
-      type  = "SECRETS_MANAGER"
-      value = var.platform_api_token_secret_arn
-    }
   }
 
   source {
@@ -322,9 +236,11 @@ resource "aws_codebuild_project" "provisioner" {
 }
 
 # ── Cross-account runtime role (defense-in-depth, ABAC on tenantId) ─────────
-# The backend may assume this with a tenantId session tag for job operations;
-# the EMR permissions only match applications tagged with that same tenantId,
-# so a control-plane tenancy bug cannot cross tenants.
+# The backend assumes this with a tenantId session tag for job operations AND
+# tenant provisioning/deprovisioning (POST /tenants, DELETE /tenants — the
+# backend creates/tears down per-tenant resources directly, no pipeline).
+# Every grant is conditioned on the resource/request tenantId tag matching
+# the session tag, so a control-plane tenancy bug cannot cross tenants.
 data "aws_iam_policy_document" "runtime_assume" {
   statement {
     actions = ["sts:AssumeRole", "sts:TagSession"]
@@ -416,6 +332,100 @@ data "aws_iam_policy_document" "runtime" {
       values   = ["emr-serverless.amazonaws.com", "sagemaker.amazonaws.com"]
     }
   }
+
+  # ── Tenant provisioning / deprovisioning (direct boto3 from the backend) ──
+  # Everything the backend creates carries a tenantId tag equal to the
+  # session tag, keeping these grants ABAC-scoped like the job path.
+  statement {
+    sid       = "TenantProvisionEmrAppCreate"
+    actions   = ["emr-serverless:CreateApplication"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/tenantId"
+      values   = ["$${aws:PrincipalTag/tenantId}"]
+    }
+  }
+  statement {
+    sid = "TenantProvisionEmrAppManage"
+    actions = [
+      "emr-serverless:GetApplication", "emr-serverless:StopApplication",
+      "emr-serverless:DeleteApplication", "emr-serverless:TagResource",
+    ]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/tenantId"
+      values   = ["$${aws:PrincipalTag/tenantId}"]
+    }
+  }
+  # IAM has no tenantId tag on the session-tag axis to condition on the role
+  # itself — the name pattern is the scope (same pattern PassRole uses).
+  statement {
+    sid = "TenantProvisionExecRoles"
+    actions = [
+      "iam:CreateRole", "iam:GetRole", "iam:TagRole",
+      "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:DeleteRole",
+    ]
+    resources = ["arn:aws:iam::${local.account_id}:role/${var.name_prefix}-tenant-*-exec"]
+  }
+  statement {
+    sid       = "TenantProvisionKmsCreate"
+    actions   = ["kms:CreateKey"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/tenantId"
+      values   = ["$${aws:PrincipalTag/tenantId}"]
+    }
+  }
+  statement {
+    sid       = "TenantProvisionKmsManage"
+    actions   = ["kms:DescribeKey", "kms:ScheduleKeyDeletion", "kms:TagResource"]
+    resources = ["arn:aws:kms:${local.region}:${local.account_id}:key/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/tenantId"
+      values   = ["$${aws:PrincipalTag/tenantId}"]
+    }
+  }
+  # Create/DeleteAlias evaluate against BOTH the alias and the target key.
+  # Alias names follow the backend's KmsCipher convention
+  # (alias/<name_prefix>-snowflake-<tenantId>).
+  statement {
+    sid     = "TenantProvisionKmsAliases"
+    actions = ["kms:CreateAlias", "kms:DeleteAlias"]
+    resources = [
+      "arn:aws:kms:${local.region}:${local.account_id}:alias/${var.name_prefix}-snowflake-*",
+      "arn:aws:kms:${local.region}:${local.account_id}:key/*",
+    ]
+  }
+}
+
+# When the org requires a permissions boundary on runtime-created roles,
+# CreateRole is only allowed WITH the boundary attached — and the backend
+# must set TENANT_ROLE_PERMISSIONS_BOUNDARY_ARN to the same ARN.
+data "aws_iam_policy_document" "runtime_boundary_guard" {
+  count = var.tenant_role_permissions_boundary_arn == "" ? 0 : 1
+
+  statement {
+    sid       = "DenyExecRoleCreateWithoutBoundary"
+    effect    = "Deny"
+    actions   = ["iam:CreateRole"]
+    resources = ["arn:aws:iam::${local.account_id}:role/${var.name_prefix}-tenant-*-exec"]
+    condition {
+      test     = "StringNotEquals"
+      variable = "iam:PermissionsBoundary"
+      values   = [var.tenant_role_permissions_boundary_arn]
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "runtime_boundary_guard" {
+  count  = var.tenant_role_permissions_boundary_arn == "" ? 0 : 1
+  name   = "tenant-role-boundary-guard"
+  role   = aws_iam_role.runtime.id
+  policy = data.aws_iam_policy_document.runtime_boundary_guard[0].json
 }
 
 resource "aws_iam_role_policy" "runtime" {
