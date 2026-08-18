@@ -333,6 +333,21 @@ data "aws_iam_policy_document" "runtime" {
     }
   }
 
+  # Tag-on-create: StartJobRun/CreateApplication/CreateKey all attach the
+  # tenantId tag at creation, which AWS authorizes via TagResource with the
+  # REQUEST tag (the resource has no tag yet, so the ResourceTag-conditioned
+  # grants below cannot match during creation).
+  statement {
+    sid       = "TenantTagOnCreate"
+    actions   = ["emr-serverless:TagResource", "kms:TagResource"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/tenantId"
+      values   = ["$${aws:PrincipalTag/tenantId}"]
+    }
+  }
+
   # ── Tenant provisioning / deprovisioning (direct boto3 from the backend) ──
   # Everything the backend creates carries a tenantId tag equal to the
   # session tag, keeping these grants ABAC-scoped like the job path.
